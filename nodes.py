@@ -978,14 +978,8 @@ class FluxTrainAndValidateLoop:
 
     def validate(self, network_trainer, validation_settings=None):
         params = (
-            network_trainer.accelerator, 
-            network_trainer.args, 
             network_trainer.current_epoch.value, 
             network_trainer.global_step,
-            network_trainer.unet,
-            network_trainer.vae,
-            network_trainer.text_encoder,
-            network_trainer.sample_prompts_te_outputs,
             validation_settings
         )
         network_trainer.optimizer_eval_fn()
