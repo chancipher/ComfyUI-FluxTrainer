@@ -466,6 +466,8 @@ class InitFluxLoRATraining:
                 "T5_lr": ("FLOAT", {"default": 0, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "text encoder learning rate"}),
                 "block_args": ("ARGS", {"default": "", "tooltip": "limit the blocks used in the LoRA"}),
                 "gradient_checkpointing": (["enabled", "enabled_with_cpu_offloading", "disabled"], {"default": "enabled", "tooltip": "use gradient checkpointing"}),
+                "logging_dir": ("STRING", {"default": "flux_trainer_logging", "multiline": False, "tooltip": "path to log, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
+                "log_with": (["tensorboard", "wandb", "all"], {"tooltip": "what logging tool(s) to use"}),
                 "loss_args": ("ARGS", {"default": "", "tooltip": "loss args"}),
                 "network_config": ("NETWORK_CONFIG", {"tooltip": "additional network config"}),
             },
