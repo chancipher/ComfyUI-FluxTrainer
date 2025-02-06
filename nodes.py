@@ -438,6 +438,7 @@ class InitFluxLoRATraining:
             "network_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2048.0, "step": 0.01, "tooltip": "network alpha"}),
             "learning_rate": ("FLOAT", {"default": 4e-4, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "learning rate"}),
             "max_train_steps": ("INT", {"default": 1500, "min": 1, "max": 100000, "step": 1, "tooltip": "max number of training steps"}),
+            "max_train_epochs": ("INT", {"default": 5, "min": 1, "max": 1000, "step": 1, "tooltip": "max number of training epochs"}),
             "apply_t5_attn_mask": ("BOOLEAN", {"default": True, "tooltip": "apply t5 attention mask"}),
             "cache_latents": (["disk", "memory", "disabled"], {"tooltip": "caches text encoder outputs"}),
             "cache_text_encoder_outputs": (["disk", "memory", "disabled"], {"tooltip": "caches text encoder outputs"}),
@@ -651,6 +652,7 @@ class InitFluxTraining:
             "output_dir": ("STRING", {"default": "flux_trainer_output", "multiline": False, "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
             "learning_rate": ("FLOAT", {"default": 4e-6, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "learning rate"}),
             "max_train_steps": ("INT", {"default": 1500, "min": 1, "max": 100000, "step": 1, "tooltip": "max number of training steps"}),
+            "max_train_epochs": ("INT", {"default": 5, "min": 1, "max": 1000, "step": 1, "tooltip": "max number of training epochs"}),
             "apply_t5_attn_mask": ("BOOLEAN", {"default": True, "tooltip": "apply t5 attention mask"}),
             "t5xxl_max_token_length": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "dev and LibreFlux uses 512, schnell 256"}),
             "cache_latents": (["disk", "memory", "disabled"], {"tooltip": "caches text encoder outputs"}),
@@ -925,8 +927,8 @@ class FluxTrainAndValidateLoop:
     def INPUT_TYPES(cls):
         return {"required": {
             "network_trainer": ("NETWORKTRAINER",),
-            "validate_at_steps": ("INT", {"default": 250, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
-            "save_at_steps": ("INT", {"default": 250, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
+            "validate_at_epochs": ("INT", {"default": 1, "min": 1, "max": 100, "step": 1, "tooltip": "the epoch point in training to validate/save"}),
+            "save_at_epochs": ("INT", {"default": 1, "min": 1, "max": 100, "step": 1, "tooltip": "the epoch point in training to validate/save"}),
             },
              "optional": {
                 "validation_settings": ("VALSETTINGS",),
@@ -934,47 +936,60 @@ class FluxTrainAndValidateLoop:
         }
 
     RETURN_TYPES = ("NETWORKTRAINER", "INT",)
-    RETURN_NAMES = ("network_trainer", "steps",)
+    RETURN_NAMES = ("network_trainer", "epochs",)
     FUNCTION = "train"
     CATEGORY = "FluxTrainer"
 
-    def train(self, network_trainer, validate_at_steps, save_at_steps, validation_settings=None):
+    def train(self, network_trainer, validate_at_epochs, save_at_epochs, validation_settings=None):
         with torch.inference_mode(False):
             training_loop = network_trainer["training_loop"]
             network_trainer = network_trainer["network_trainer"]
 
+            max_train_epochs = network_trainer.args.max_train_epochs
             target_global_step = network_trainer.args.max_train_steps
+            steps_per_epoch = target_global_step // max_train_epochs
+
             comfy_pbar = comfy.utils.ProgressBar(target_global_step)
             network_trainer.comfy_pbar = comfy_pbar
 
             network_trainer.optimizer_train_fn()
 
             while network_trainer.global_step < target_global_step:
-                next_validate_step = ((network_trainer.global_step // validate_at_steps) + 1) * validate_at_steps
-                next_save_step = ((network_trainer.global_step // save_at_steps) + 1) * save_at_steps
+                current_epoch = network_trainer.global_step // steps_per_epoch
+
+                # 计算下一个验证和保存的 epoch
+                next_validate_epoch = ((current_epoch // validate_at_epochs) + 1) * validate_at_epochs
+                next_save_epoch = ((current_epoch // save_at_epochs) + 1) * save_at_epochs
+
+                # 将 epoch 转换为步数
+                next_validate_step = next_validate_epoch * steps_per_epoch
+                next_save_step = next_save_epoch * steps_per_epoch
+
+                # 确定 break_at_steps
+                break_at_steps = min(next_validate_step, next_save_step, target_global_step)
 
                 steps_done = training_loop(
-                    break_at_steps=min(next_validate_step, next_save_step),
-                    epoch=network_trainer.current_epoch.value,
+                    break_at_steps=break_at_steps,
+                    epoch=current_epoch,
                 )
 
-                # Check if we need to validate
-                if network_trainer.global_step % validate_at_steps == 0:
+                # 检查是否需要验证
+                if current_epoch % validate_at_epochs == 0:
                     self.validate(network_trainer, validation_settings)
 
-                # Check if we need to save
-                if network_trainer.global_step % save_at_steps == 0:
+                # 检查是否需要保存
+                if current_epoch % save_at_epochs == 0:
                     self.save(network_trainer)
 
-                # Also break if the global steps have reached the max train steps
-                if network_trainer.global_step >= network_trainer.args.max_train_steps:
+                # 如果达到最大训练步数，则退出
+                if network_trainer.global_step >= target_global_step:
                     break
 
             trainer = {
                 "network_trainer": network_trainer,
                 "training_loop": training_loop,
             }
-        return (trainer, network_trainer.global_step)
+        return (trainer, network_trainer.current_epoch.value)
 
     def validate(self, network_trainer, validation_settings=None):
         params = (
